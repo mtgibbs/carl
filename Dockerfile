@@ -2,7 +2,7 @@
 # Multi-stage Dockerfile for Deno application
 
 # Build stage - cache dependencies
-FROM denoland/deno:2.1.4 AS builder
+FROM denoland/deno:2.1.9 AS builder
 
 WORKDIR /app
 
@@ -19,7 +19,7 @@ COPY src/ ./src/
 RUN deno check src/**/*.ts
 
 # Production stage - minimal runtime
-FROM denoland/deno:2.1.4
+FROM denoland/deno:2.1.9
 
 WORKDIR /app
 

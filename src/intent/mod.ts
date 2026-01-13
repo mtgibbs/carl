@@ -12,6 +12,7 @@ export { extractDateRange, isWithinRange, filterByDateRange, type DateRange } fr
 export type IntentType =
   | "grades"
   | "missing"
+  | "zeros"
   | "due_soon"
   | "help"
   | "greeting"
@@ -53,6 +54,17 @@ export function parseIntent(message: string): ParsedIntent {
     lower.includes("forgot")
   ) {
     type = "missing";
+  }
+  // Zero/low grade assignments (graded but scored poorly)
+  else if (
+    lower.includes("zero") ||
+    lower.includes(" 0 ") ||
+    lower.match(/\b0\b/) ||
+    lower.includes("low grade") ||
+    lower.includes("fail") ||
+    lower.includes("bombed")
+  ) {
+    type = "zeros";
   }
   // Due soon / upcoming
   else if (

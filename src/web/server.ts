@@ -13,9 +13,11 @@ import {
   getMissingAssignments,
   getUnsubmittedPastDue,
   getDueThisWeek,
+  getZeroGradeAssignments,
   type SimpleCourse,
   type SimpleAssignment,
   type SimpleTodoItem,
+  type SimpleGradedAssignment,
 } from "../api/mod.ts";
 import { parseIntent, filterByDateRange, type DateRange } from "../intent/mod.ts";
 import {
@@ -127,6 +129,25 @@ function formatDueResponse(items: SimpleTodoItem[], dateContext?: string): ChatR
   return {
     message: `Here's what's coming up${contextStr}:\n\n${lines.join("\n\n")}`,
     data: { type: "todo", items: unsubmitted },
+  };
+}
+
+function formatZerosResponse(assignments: SimpleGradedAssignment[], dateContext?: string): ChatResponse {
+  const contextStr = dateContext ? ` for ${dateContext}` : "";
+
+  if (assignments.length === 0) {
+    return { message: `Good news - I don't see any assignments with zeros${contextStr}.` };
+  }
+
+  const lines = assignments.map((a) => {
+    const due = a.dueAt ? `(was due ${formatDate(a.dueAt)})` : "";
+    const score = `${a.score}/${a.pointsPossible} (${a.percentage}%)`;
+    return `• ${a.name} - ${a.courseName}\n  Score: ${score} ${due}`;
+  });
+
+  return {
+    message: `Found ${assignments.length} assignment${assignments.length === 1 ? "" : "s"} with zeros or very low grades${contextStr}:\n\n${lines.join("\n\n")}`,
+    data: { type: "assignments", items: assignments },
   };
 }
 
@@ -273,6 +294,16 @@ async function handleLLMIntent(intent: LLMIntent, userId: string, originalMessag
         return formatMissingResponse(combined, dateContext);
       }
 
+      case "zeros": {
+        let zeros = await getZeroGradeAssignments();
+
+        if (dateRange) {
+          zeros = filterByDateRange(zeros, dateRange);
+        }
+
+        return formatZerosResponse(zeros, dateContext);
+      }
+
       case "due_soon": {
         let items: SimpleTodoItem[];
 
@@ -355,6 +386,16 @@ async function handleKeywordIntent(message: string): Promise<ChatResponse> {
         }
 
         return formatMissingResponse(combined, dateContext);
+      }
+
+      case "zeros": {
+        let zeros = await getZeroGradeAssignments();
+
+        if (dateRange) {
+          zeros = filterByDateRange(zeros, dateRange);
+        }
+
+        return formatZerosResponse(zeros, dateContext);
       }
 
       case "due_soon": {

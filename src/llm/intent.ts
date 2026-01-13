@@ -28,7 +28,7 @@ YOUR CONSTRAINTS:
 OUTPUT FORMAT:
 Always respond with a JSON object:
 {
-  "intent": "grades" | "missing" | "due_soon" | "analysis" | "help" | "greeting" | "blocked" | "unknown",
+  "intent": "grades" | "missing" | "zeros" | "due_soon" | "analysis" | "help" | "greeting" | "blocked" | "unknown",
   "dateFilter": "2026" | "this week" | "january" | null,
   "analysis": {
     "type": "percentage" | "comparison" | "summary" | "count" | null,
@@ -36,6 +36,16 @@ Always respond with a JSON object:
   },
   "response": "Only for greeting/help/blocked - the text response to show"
 }
+
+INTENT DEFINITIONS:
+- "grades": User wants to see their course grades
+- "missing": User wants to see assignments they haven't submitted
+- "zeros": User wants to see assignments that were graded with zero or very low scores (submitted but failed)
+- "due_soon": User wants to see upcoming assignments
+- "analysis": User wants analytical reasoning about their data
+- "help": User wants help understanding what you can do
+- "greeting": User is saying hello
+- "blocked": User is asking for homework help (writing essays, solving problems, etc.)
 
 EXAMPLES:
 
@@ -57,6 +67,12 @@ User: "How many assignments am I missing in math?"
 User: "Help"
 {"intent": "help", "dateFilter": null, "analysis": null, "response": null}
 
+User: "Do I have any zeros?"
+{"intent": "zeros", "dateFilter": null, "analysis": null, "response": null}
+
+User: "What assignments got a zero last week?"
+{"intent": "zeros", "dateFilter": "last week", "analysis": null, "response": null}
+
 User: "Summarize my grades"
 {"intent": "analysis", "dateFilter": null, "analysis": {"type": "summary", "question": "summarize grades across all courses"}, "response": null}
 
@@ -68,7 +84,7 @@ export interface AnalysisRequest {
 }
 
 export interface LLMIntent {
-  intent: "grades" | "missing" | "due_soon" | "analysis" | "help" | "greeting" | "blocked" | "unknown";
+  intent: "grades" | "missing" | "zeros" | "due_soon" | "analysis" | "help" | "greeting" | "blocked" | "unknown";
   dateRange: DateRange | null;
   analysis: AnalysisRequest | null;
   response: string | null;

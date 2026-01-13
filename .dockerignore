@@ -1,0 +1,28 @@
+# Git
+.git
+.gitignore
+
+# IDE
+.vscode
+.idea
+*.swp
+*.swo
+
+# Environment files (secrets)
+.env
+.env.*
+!.env.example
+
+# Documentation
+*.md
+LICENSE
+
+# GitHub
+.github
+
+# Local development
+.DS_Store
+Thumbs.db
+
+# Deno cache (will be regenerated)
+.deno

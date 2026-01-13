@@ -10,7 +10,8 @@
     "fmt": "deno fmt"
   },
   "imports": {
-    "@std/": "jsr:@std@^0.224/"
+    "@std/": "jsr:@std@^0.224/",
+    "@std/dotenv": "jsr:@std/dotenv@^0.225.3"
   },
   "compilerOptions": {
     "strict": true

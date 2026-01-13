@@ -659,8 +659,8 @@ const CHAT_HTML = `<!DOCTYPE html>
       background-size: cover;
       background-position: center;
       border-radius: 50%;
-      opacity: 0.08;
-      mix-blend-mode: overlay;
+      opacity: 0.33;
+      mix-blend-mode: screen;
       pointer-events: none;
     }
 

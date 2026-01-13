@@ -385,3 +385,4 @@ When working on this project:
 5. **Remember the deployment target** - ARM64 Pi cluster, resource constrained
 6. **Container runs as non-root** - UID 1000, user `carl`
 7. **Secrets from 1Password** - pi-cluster vault, Canvas-API item
+8. **Ask about version bumps** - After pushing significant changes, ask the user if they want to bump the semver (patch for fixes, minor for features, major for breaking changes)

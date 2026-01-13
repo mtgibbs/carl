@@ -132,22 +132,84 @@ function formatDueResponse(items: SimpleTodoItem[], dateContext?: string): ChatR
   };
 }
 
-function formatZerosResponse(assignments: SimpleGradedAssignment[], dateContext?: string): ChatResponse {
+/** Combined problem item - either missing or zero-graded */
+interface ProblemAssignment {
+  id: number;
+  name: string;
+  courseName: string;
+  courseId: number;
+  dueAt: Date | null;
+  pointsPossible: number | null;
+  status: "missing" | "zero";
+  score?: number | null;
+  percentage?: number | null;
+  url: string;
+}
+
+function formatZerosResponse(
+  missing: SimpleAssignment[],
+  zeros: SimpleGradedAssignment[],
+  dateContext?: string
+): ChatResponse {
   const contextStr = dateContext ? ` for ${dateContext}` : "";
 
-  if (assignments.length === 0) {
-    return { message: `Good news - I don't see any assignments with zeros${contextStr}.` };
-  }
+  // Combine and dedupe (zeros take precedence since they have score info)
+  const zeroIds = new Set(zeros.map((z) => z.id));
+  const problems: ProblemAssignment[] = [
+    ...zeros.map((z) => ({
+      id: z.id,
+      name: z.name,
+      courseName: z.courseName,
+      courseId: z.courseId,
+      dueAt: z.dueAt,
+      pointsPossible: z.pointsPossible,
+      status: "zero" as const,
+      score: z.score,
+      percentage: z.percentage,
+      url: z.url,
+    })),
+    ...missing
+      .filter((m) => !zeroIds.has(m.id))
+      .map((m) => ({
+        id: m.id,
+        name: m.name,
+        courseName: m.courseName,
+        courseId: m.courseId,
+        dueAt: m.dueAt,
+        pointsPossible: m.pointsPossible,
+        status: "missing" as const,
+        url: m.url,
+      })),
+  ];
 
-  const lines = assignments.map((a) => {
-    const due = a.dueAt ? `(was due ${formatDate(a.dueAt)})` : "";
-    const score = `${a.score}/${a.pointsPossible} (${a.percentage}%)`;
-    return `• ${a.name} - ${a.courseName}\n  Score: ${score} ${due}`;
+  // Sort by due date (most recent first)
+  problems.sort((a, b) => {
+    if (!a.dueAt || !b.dueAt) return 0;
+    return b.dueAt.getTime() - a.dueAt.getTime();
   });
 
+  if (problems.length === 0) {
+    return { message: `Good news - I don't see any zeros or missing assignments${contextStr}.` };
+  }
+
+  const lines = problems.map((p) => {
+    const due = p.dueAt ? `(due ${formatDate(p.dueAt)})` : "";
+    if (p.status === "zero") {
+      return `• ${p.name} - ${p.courseName}\n  ❌ Graded: ${p.score}/${p.pointsPossible} (${p.percentage}%) ${due}`;
+    } else {
+      return `• ${p.name} - ${p.courseName}\n  ⚠️ Missing/Not submitted ${due}`;
+    }
+  });
+
+  const zeroCount = problems.filter((p) => p.status === "zero").length;
+  const missingCount = problems.filter((p) => p.status === "missing").length;
+  const summary = [];
+  if (zeroCount > 0) summary.push(`${zeroCount} graded as zero`);
+  if (missingCount > 0) summary.push(`${missingCount} missing`);
+
   return {
-    message: `Found ${assignments.length} assignment${assignments.length === 1 ? "" : "s"} with zeros or very low grades${contextStr}:\n\n${lines.join("\n\n")}`,
-    data: { type: "assignments", items: assignments },
+    message: `Found ${problems.length} problem assignment${problems.length === 1 ? "" : "s"}${contextStr} (${summary.join(", ")}):\n\n${lines.join("\n\n")}`,
+    data: { type: "assignments", items: problems },
   };
 }
 
@@ -295,13 +357,28 @@ async function handleLLMIntent(intent: LLMIntent, userId: string, originalMessag
       }
 
       case "zeros": {
-        let zeros = await getZeroGradeAssignments();
+        // Fetch both missing and zero-graded assignments
+        const [missingRaw, unsubmitted, zeros] = await Promise.all([
+          getMissingAssignments(),
+          getUnsubmittedPastDue(),
+          getZeroGradeAssignments(),
+        ]);
+
+        // Combine missing sources
+        const seenMissing = new Set(missingRaw.map((m) => m.id));
+        let allMissing = [
+          ...missingRaw,
+          ...unsubmitted.filter((u) => !seenMissing.has(u.id)),
+        ];
+
+        let filteredZeros = zeros;
 
         if (dateRange) {
-          zeros = filterByDateRange(zeros, dateRange);
+          allMissing = filterByDateRange(allMissing, dateRange);
+          filteredZeros = filterByDateRange(zeros, dateRange);
         }
 
-        return formatZerosResponse(zeros, dateContext);
+        return formatZerosResponse(allMissing, filteredZeros, dateContext);
       }
 
       case "due_soon": {
@@ -389,13 +466,28 @@ async function handleKeywordIntent(message: string): Promise<ChatResponse> {
       }
 
       case "zeros": {
-        let zeros = await getZeroGradeAssignments();
+        // Fetch both missing and zero-graded assignments
+        const [missingRaw, unsubmitted, zeros] = await Promise.all([
+          getMissingAssignments(),
+          getUnsubmittedPastDue(),
+          getZeroGradeAssignments(),
+        ]);
+
+        // Combine missing sources
+        const seenMissing = new Set(missingRaw.map((m) => m.id));
+        let allMissing = [
+          ...missingRaw,
+          ...unsubmitted.filter((u) => !seenMissing.has(u.id)),
+        ];
+
+        let filteredZeros = zeros;
 
         if (dateRange) {
-          zeros = filterByDateRange(zeros, dateRange);
+          allMissing = filterByDateRange(allMissing, dateRange);
+          filteredZeros = filterByDateRange(zeros, dateRange);
         }
 
-        return formatZerosResponse(zeros, dateContext);
+        return formatZerosResponse(allMissing, filteredZeros, dateContext);
       }
 
       case "due_soon": {

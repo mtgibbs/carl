@@ -1,21 +1,17 @@
 # C.A.R.L. - Canvas Assignment Reminder Liaison
 # Multi-stage Dockerfile for Deno application
 
-# Build stage - cache dependencies
+# Build stage - type check and cache dependencies
 FROM denoland/deno:2.1.9 AS builder
 
 WORKDIR /app
 
-# Copy dependency files first for better caching
-COPY deno.json deno.lock* ./
-
-# Cache dependencies
-RUN deno install
-
 # Copy source code
+COPY deno.json ./
 COPY src/ ./src/
 
-# Type check and cache all modules
+# Cache dependencies and type check
+RUN deno cache src/web/server.ts
 RUN deno check src/**/*.ts
 
 # Production stage - minimal runtime
@@ -23,19 +19,12 @@ FROM denoland/deno:2.1.9
 
 WORKDIR /app
 
-# Create non-root user for security
-RUN addgroup --system --gid 1001 carl && \
-    adduser --system --uid 1001 --ingroup carl carl
-
-# Copy from builder
+# Copy source from builder
 COPY --from=builder /app/deno.json ./
 COPY --from=builder /app/src/ ./src/
-COPY --from=builder /root/.cache/deno /home/carl/.cache/deno
 
-# Change ownership to non-root user
-RUN chown -R carl:carl /app /home/carl/.cache
-
-USER carl
+# Cache dependencies (will use layer cache on rebuilds)
+RUN deno cache src/web/server.ts
 
 # Expose web server port
 EXPOSE 8080

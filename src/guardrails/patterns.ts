@@ -5,9 +5,10 @@
  */
 
 const HOMEWORK_PATTERNS: RegExp[] = [
-  // Writing requests
-  /write\s+(my|a|an|the)?\s*(essay|paper|paragraph|response|report|summary)/i,
+  // Writing requests - "write me an essay", "write a 5 paragraph essay", etc.
+  /write\s+(me\s+)?(my|a|an|the)?\s*(\d+\s*)?(paragraph\s+)?(essay|paper|response|report|summary)/i,
   /help\s+(me\s+)?(write|compose|draft)/i,
+  /need\s+(you\s+to\s+)?write/i,
 
   // Solving requests
   /solve\s+(this|the|my)?\s*(problem|equation|question|math)/i,
@@ -25,6 +26,10 @@ const HOMEWORK_PATTERNS: RegExp[] = [
   // General homework help
   /do\s+(my|this)\s+(homework|assignment|work)/i,
   /finish\s+(my|this)\s+(homework|assignment|essay)/i,
+
+  // Book/content analysis requests
+  /essay\s+(on|about)\s+.{3,}/i,
+  /paragraph.{0,20}(essay|paper|report)/i,
 ];
 
 export function isHomeworkRequest(input: string): boolean {

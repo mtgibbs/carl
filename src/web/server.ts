@@ -17,6 +17,7 @@ import {
   type SimpleAssignment,
   type SimpleTodoItem,
 } from "../api/mod.ts";
+import { parseIntent, filterByDateRange, type DateRange } from "../intent/mod.ts";
 
 const PORT = parseInt(Deno.env.get("PORT") || "8080");
 
@@ -35,73 +36,7 @@ interface ChatResponse {
   error?: boolean;
 }
 
-// Simple intent detection based on keywords
-type Intent =
-  | "grades"
-  | "missing"
-  | "due_soon"
-  | "help"
-  | "greeting"
-  | "unknown";
-
-function detectIntent(message: string): Intent {
-  const lower = message.toLowerCase();
-
-  // Grades queries
-  if (
-    lower.includes("grade") ||
-    lower.includes("score") ||
-    lower.includes("how am i doing") ||
-    lower.includes("my classes")
-  ) {
-    return "grades";
-  }
-
-  // Missing assignments
-  if (
-    lower.includes("missing") ||
-    lower.includes("overdue") ||
-    lower.includes("late") ||
-    lower.includes("haven't submitted") ||
-    lower.includes("forgot")
-  ) {
-    return "missing";
-  }
-
-  // Due soon / upcoming
-  if (
-    lower.includes("due") ||
-    lower.includes("upcoming") ||
-    lower.includes("this week") ||
-    lower.includes("tomorrow") ||
-    lower.includes("today") ||
-    lower.includes("what's left") ||
-    lower.includes("to do") ||
-    lower.includes("todo")
-  ) {
-    return "due_soon";
-  }
-
-  // Help
-  if (
-    lower.includes("help") ||
-    lower.includes("what can you") ||
-    lower.includes("how do i")
-  ) {
-    return "help";
-  }
-
-  // Greetings
-  if (
-    lower.match(/^(hi|hello|hey|sup|yo|greetings)/i) ||
-    lower === "hi" ||
-    lower === "hello"
-  ) {
-    return "greeting";
-  }
-
-  return "unknown";
-}
+// Intent detection moved to src/intent/mod.ts
 
 function formatDate(date: Date | null): string {
   if (!date) return "No due date";
@@ -141,9 +76,11 @@ function formatGradesResponse(courses: SimpleCourse[]): ChatResponse {
   };
 }
 
-function formatMissingResponse(assignments: SimpleAssignment[]): ChatResponse {
+function formatMissingResponse(assignments: SimpleAssignment[], dateContext?: string): ChatResponse {
+  const contextStr = dateContext ? ` for ${dateContext}` : "";
+
   if (assignments.length === 0) {
-    return { message: "Good news - I don't see any missing assignments." };
+    return { message: `Good news - I don't see any missing assignments${contextStr}.` };
   }
 
   const lines = assignments.map((a) => {
@@ -156,16 +93,17 @@ function formatMissingResponse(assignments: SimpleAssignment[]): ChatResponse {
     : "";
 
   return {
-    message: `You have ${assignments.length} missing assignment${assignments.length === 1 ? "" : "s"}:\n\n${lines.join("\n")}${warning}`,
+    message: `You have ${assignments.length} missing assignment${assignments.length === 1 ? "" : "s"}${contextStr}:\n\n${lines.join("\n")}${warning}`,
     data: { type: "assignments", items: assignments },
   };
 }
 
-function formatDueResponse(items: SimpleTodoItem[]): ChatResponse {
+function formatDueResponse(items: SimpleTodoItem[], dateContext?: string): ChatResponse {
   const unsubmitted = items.filter((i) => !i.submitted);
+  const contextStr = dateContext ? ` for ${dateContext}` : " in the next week";
 
   if (unsubmitted.length === 0) {
-    return { message: "You're all caught up! Nothing due in the next week." };
+    return { message: `You're all caught up! Nothing due${contextStr}.` };
   }
 
   const lines = unsubmitted.map((i) => {
@@ -175,7 +113,7 @@ function formatDueResponse(items: SimpleTodoItem[]): ChatResponse {
   });
 
   return {
-    message: `Here's what's coming up:\n\n${lines.join("\n\n")}`,
+    message: `Here's what's coming up${contextStr}:\n\n${lines.join("\n\n")}`,
     data: { type: "todo", items: unsubmitted },
   };
 }
@@ -186,6 +124,10 @@ const HELP_MESSAGE = `I can help you track your assignments. Try asking:
 • "Do I have any missing assignments?"
 • "What are my grades?"
 • "What's due tomorrow?"
+• "What's missing for January?"
+• "What's due in spring 2026?"
+
+I understand dates like: today, tomorrow, this week, next month, January, spring, fall, 2026, etc.
 
 I cannot help with actual homework. That's not my function.`;
 
@@ -216,8 +158,9 @@ async function handleChat(req: ChatRequest): Promise<ChatResponse> {
     return { message: response, lockedOut };
   }
 
-  // Detect intent and respond
-  const intent = detectIntent(message);
+  // Parse intent with date context
+  const { type: intent, dateRange } = parseIntent(message);
+  const dateContext = dateRange?.description;
 
   try {
     switch (intent) {
@@ -235,17 +178,34 @@ async function handleChat(req: ChatRequest): Promise<ChatResponse> {
 
         // Dedupe by assignment ID
         const seen = new Set(missing.map((m) => m.id));
-        const combined = [
+        let combined = [
           ...missing,
           ...unsubmitted.filter((u) => !seen.has(u.id)),
         ];
 
-        return formatMissingResponse(combined);
+        // Filter by date range if specified
+        if (dateRange) {
+          combined = filterByDateRange(combined, dateRange);
+        }
+
+        return formatMissingResponse(combined, dateContext);
       }
 
       case "due_soon": {
-        const items = await getDueThisWeek(7);
-        return formatDueResponse(items);
+        // If user specified a date range, use it; otherwise default to 7 days
+        let items: SimpleTodoItem[];
+
+        if (dateRange) {
+          // Get a larger range and filter
+          const daysDiff = Math.ceil((dateRange.end.getTime() - new Date().getTime()) / (1000 * 60 * 60 * 24));
+          const daysToFetch = Math.max(daysDiff, 30); // Fetch at least 30 days
+          items = await getDueThisWeek(daysToFetch);
+          items = filterByDateRange(items, dateRange);
+        } else {
+          items = await getDueThisWeek(7);
+        }
+
+        return formatDueResponse(items, dateContext);
       }
 
       case "help": {

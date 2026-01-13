@@ -31,6 +31,7 @@ import {
 } from "../llm/mod.ts";
 
 const PORT = parseInt(Deno.env.get("PORT") || "8080");
+const TIMEZONE = Deno.env.get("TIMEZONE") || "America/New_York";
 
 // Track if LLM is available for enhanced intent detection
 let llmAvailable = false;
@@ -54,15 +55,30 @@ interface ChatResponse {
 
 function formatDate(date: Date | null): string {
   if (!date) return "No due date";
+
+  // Get current time in the configured timezone
   const now = new Date();
+  const tzOptions = { timeZone: TIMEZONE };
+
+  // Compare dates in the target timezone
+  const dateInTz = date.toLocaleDateString("en-US", tzOptions);
+  const nowInTz = now.toLocaleDateString("en-US", tzOptions);
+
   const tomorrow = new Date(now);
   tomorrow.setDate(tomorrow.getDate() + 1);
+  const tomorrowInTz = tomorrow.toLocaleDateString("en-US", tzOptions);
 
-  if (date.toDateString() === now.toDateString()) {
-    return `Today at ${date.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}`;
+  const timeStr = date.toLocaleTimeString("en-US", {
+    hour: "numeric",
+    minute: "2-digit",
+    timeZone: TIMEZONE,
+  });
+
+  if (dateInTz === nowInTz) {
+    return `Today at ${timeStr}`;
   }
-  if (date.toDateString() === tomorrow.toDateString()) {
-    return `Tomorrow at ${date.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}`;
+  if (dateInTz === tomorrowInTz) {
+    return `Tomorrow at ${timeStr}`;
   }
   return date.toLocaleDateString("en-US", {
     weekday: "short",
@@ -70,6 +86,7 @@ function formatDate(date: Date | null): string {
     day: "numeric",
     hour: "numeric",
     minute: "2-digit",
+    timeZone: TIMEZONE,
   });
 }
 

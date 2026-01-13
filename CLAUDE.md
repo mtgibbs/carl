@@ -16,10 +16,10 @@ CARL is a constrained AI assistant for tracking school assignments. Built for a 
 - Makes boundaries feel like part of the bot's personality, not a challenge to bypass
 
 ### 2. Small Model by Design
-- Will use a 1-3B parameter model (Llama 3.2, Phi-3, or similar)
+- Uses a 1-3B parameter model (Llama 3.2, Phi-3, or similar)
 - Small enough that even if guardrails fail, it can't write coherent essays
 - Only has access to Canvas tools - no general knowledge
-- **Current**: Using keyword-based intent detection (no LLM yet)
+- **Current**: Ollama integration with auto-detected model, keyword fallback
 
 ### 3. Explicit Refusal Over Failure
 - Pattern detection catches homework requests before they reach the LLM
@@ -39,18 +39,19 @@ CARL is a constrained AI assistant for tracking school assignments. Built for a 
          │
          ▼
 ┌─────────────────┐
-│   Guardrails    │──── Pattern matching + HAL responses
+│   Guardrails    │──── Pattern matching + HAL responses (ALWAYS runs first)
 └────────┬────────┘
          │
          ▼
 ┌─────────────────┐
-│  Intent Detection│──── Keyword-based (LLM optional via Ollama)
+│  Intent Detection│──── Ollama LLM (if available) → Keyword fallback
 └────────┬────────┘
          │
-         ▼
-┌─────────────────┐
-│   Canvas API    │──── Actual data fetching
-└─────────────────┘
+         ├──────────────────┐
+         ▼                  ▼
+┌─────────────────┐  ┌─────────────────┐
+│   Canvas API    │  │  LLM Analysis   │──── "What % is missing?"
+└─────────────────┘  └─────────────────┘
 ```
 
 ## Tech Stack
@@ -112,7 +113,9 @@ HAL 9000-themed interface at `src/web/server.ts`:
 
 ### Intent Detection
 
-Current implementation uses keyword matching (no LLM required):
+Two-tier system with LLM enhancement and keyword fallback:
+
+**Keyword Detection (always available):**
 
 | Intent | Trigger Keywords |
 |--------|------------------|
@@ -121,6 +124,69 @@ Current implementation uses keyword matching (no LLM required):
 | `due_soon` | "due", "upcoming", "this week", "tomorrow" |
 | `help` | "help", "what can you" |
 | `greeting` | "hi", "hello", "hey" |
+
+**LLM Detection (when Ollama available):**
+
+| Intent | Example Queries |
+|--------|-----------------|
+| `analysis` | "What percentage is missing?", "Which class am I doing worst in?" |
+| `blocked` | LLM can also detect homework requests the patterns missed |
+
+**Date Filtering:**
+
+Both systems support date extraction from queries:
+- Years: "2026", "in 2025"
+- Relative: "today", "tomorrow", "this week", "next week"
+- Months: "January", "in March"
+- Semesters: "fall", "spring", "this semester"
+
+## Ollama Integration
+
+CARL optionally connects to Ollama for enhanced intent detection and analytical queries.
+
+### How It Works
+
+1. **Guardrails run FIRST** - Pattern matching catches obvious homework requests before LLM
+2. **LLM parses intent** - If available, Ollama understands natural language queries
+3. **Analytical queries** - LLM can reason about assignment data (percentages, comparisons)
+4. **Keyword fallback** - If Ollama unavailable, keyword detection handles requests
+
+### What the LLM Can/Cannot Do
+
+**CAN (allowed):**
+- Parse intent from natural language
+- Answer analytical questions about assignment metadata
+- Calculate percentages, comparisons, summaries
+- Understand date context in queries
+
+**CANNOT (blocked by guardrails + system prompt):**
+- Write essays or homework content
+- Solve math problems
+- Generate creative content
+- Access general knowledge
+
+### Configuration
+
+Only needs `OLLAMA_URL` - model is auto-detected from whatever is pulled in Ollama:
+
+```bash
+OLLAMA_URL=http://ollama.ollama.svc.cluster.local:11434
+```
+
+Recommended models (pull one):
+- `llama3.2:1b` - Smallest, fastest (~1GB)
+- `phi3:mini` - Good balance (~2GB)
+- `gemma2:2b` - Alternative (~1.5GB)
+
+### Modules
+
+| Module | Purpose |
+|--------|---------|
+| `src/llm/client.ts` | Ollama HTTP client, model auto-detection |
+| `src/llm/intent.ts` | LLM-based intent parsing, analysis prompts |
+| `src/llm/mod.ts` | Module exports |
+| `src/intent/dates.ts` | Date extraction from queries |
+| `src/intent/mod.ts` | Combined intent parsing |
 
 ## Container & Deployment
 
@@ -171,13 +237,14 @@ clusters/pi-k3s/apps/carl/
 
 ### 1Password Secrets
 
-Canvas credentials stored in 1Password `pi-cluster` vault, item `Canvas-API`:
+Credentials stored in 1Password `pi-cluster` vault, item `Canvas-API`:
 
-| Field | Env Var |
-|-------|---------|
-| `token` | `CANVAS_API_TOKEN` |
-| `base_url` | `CANVAS_BASE_URL` |
-| `student_id` | `CANVAS_STUDENT_ID` |
+| Field | Env Var | Required |
+|-------|---------|----------|
+| `token` | `CANVAS_API_TOKEN` | Yes |
+| `base_url` | `CANVAS_BASE_URL` | Yes |
+| `student_id` | `CANVAS_STUDENT_ID` | Yes |
+| `ollama_url` | `OLLAMA_URL` | No (enables LLM) |
 
 ### Resource Requirements
 
@@ -193,10 +260,14 @@ Canvas credentials stored in 1Password `pi-cluster` vault, item `Canvas-API`:
 - [x] Canvas API integration (ported from school-canvas-claude-integration)
 - [x] Web chat UI with HAL 9000 theme
 - [x] Keyword-based intent detection
+- [x] Date extraction and filtering (years, months, relative dates)
 - [x] Dockerfile with non-root user
 - [x] GitHub Actions with multi-arch builds
 - [x] Semver tagging support
 - [x] Deployed to pi-cluster at carl.lab.mtgibbs.dev
+- [x] Ollama integration with model auto-detection
+- [x] LLM-based analytical queries (percentages, comparisons)
+- [x] Graceful fallback to keyword detection
 
 ### Next Steps
 1. **Discord Bot**
@@ -204,10 +275,9 @@ Canvas credentials stored in 1Password `pi-cluster` vault, item `Canvas-API`:
    - Implement cron scheduling for daily digest
    - Add missing assignment alerts
 
-2. **LLM Integration** (optional)
-   - Deploy Ollama to cluster
-   - Add intent classification layer
-   - Improve natural language understanding
+2. **Guardrails Testing**
+   - Test LLM guardrails with various bypass attempts
+   - Fine-tune system prompt if needed
 
 ## File Structure
 
@@ -240,6 +310,13 @@ carl/
     │   ├── mod.ts               # Exports
     │   ├── patterns.ts          # Homework detection
     │   └── hal.ts               # HAL 9000 responses
+    ├── intent/
+    │   ├── mod.ts               # Intent parsing exports
+    │   └── dates.ts             # Date extraction from queries
+    ├── llm/
+    │   ├── mod.ts               # LLM module exports
+    │   ├── client.ts            # Ollama HTTP client
+    │   └── intent.ts            # LLM intent parsing + analysis
     └── web/
         └── server.ts            # Chat UI server
 ```
@@ -275,8 +352,8 @@ deno task lint
 | `CANVAS_STUDENT_ID` | Student ID (numeric for observers, "self" for students) |
 | `DISCORD_WEBHOOK_URL` | Discord webhook for notifications |
 | `PORT` | Web server port (default: 8080) |
-| `OLLAMA_URL` | Ollama API endpoint (optional) |
-| `OLLAMA_MODEL` | Model to use (optional, e.g., llama3.2:1b) |
+| `OLLAMA_URL` | Ollama API endpoint (optional - enables LLM, model auto-detected) |
+| `OLLAMA_TIMEOUT` | Ollama request timeout in ms (default: 30000) |
 
 ## Guardrails Reference
 

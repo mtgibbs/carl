@@ -18,8 +18,20 @@ import {
   type SimpleTodoItem,
 } from "../api/mod.ts";
 import { parseIntent, filterByDateRange, type DateRange } from "../intent/mod.ts";
+import {
+  initOllama,
+  isOllamaAvailable,
+  loadOllamaConfig,
+  getDetectedModel,
+  parseIntentWithLLM,
+  performAnalysis,
+  type LLMIntent,
+} from "../llm/mod.ts";
 
 const PORT = parseInt(Deno.env.get("PORT") || "8080");
+
+// Track if LLM is available for enhanced intent detection
+let llmAvailable = false;
 
 interface ChatRequest {
   userId: string;
@@ -118,7 +130,7 @@ function formatDueResponse(items: SimpleTodoItem[], dateContext?: string): ChatR
   };
 }
 
-const HELP_MESSAGE = `I can help you track your assignments. Try asking:
+const HELP_MESSAGE_BASIC = `I can help you track your assignments. Try asking:
 
 • "What's due this week?"
 • "Do I have any missing assignments?"
@@ -130,6 +142,25 @@ const HELP_MESSAGE = `I can help you track your assignments. Try asking:
 I understand dates like: today, tomorrow, this week, next month, January, spring, fall, 2026, etc.
 
 I cannot help with actual homework. That's not my function.`;
+
+const HELP_MESSAGE_ENHANCED = `I can help you track your assignments. Try asking:
+
+• "What's due this week?"
+• "Do I have any missing assignments?"
+• "What are my grades?"
+• "What percentage of my work is missing?"
+• "Which class am I doing worst in?"
+• "How many assignments am I missing in math?"
+
+I understand dates like: today, tomorrow, this week, next month, January, spring, fall, 2026, etc.
+
+I can also answer analytical questions about your assignments and grades.
+
+I cannot help with actual homework. That's not my function.`;
+
+function getHelpMessage(): string {
+  return llmAvailable ? HELP_MESSAGE_ENHANCED : HELP_MESSAGE_BASIC;
+}
 
 const GREETING_RESPONSES = [
   "Hello. I am C.A.R.L., your Canvas Assignment Reminder Liaison. How can I help you track your assignments?",
@@ -143,6 +174,30 @@ const UNKNOWN_RESPONSES = [
   "I don't follow. Would you like to know about upcoming assignments or your current grades?",
 ];
 
+/**
+ * Fetch all data needed for analysis queries
+ */
+async function fetchAllData() {
+  const [courses, missing, unsubmitted, upcoming] = await Promise.all([
+    getCoursesWithGrades(),
+    getMissingAssignments(),
+    getUnsubmittedPastDue(),
+    getDueThisWeek(30),
+  ]);
+
+  // Dedupe missing assignments
+  const seenMissing = new Set(missing.map((m) => m.id));
+  const allMissing = [
+    ...missing,
+    ...unsubmitted.filter((u) => !seenMissing.has(u.id)),
+  ];
+
+  return { courses, missing: allMissing, upcoming };
+}
+
+/**
+ * Handle a chat request - main entry point
+ */
 async function handleChat(req: ChatRequest): Promise<ChatResponse> {
   const { userId, message } = req;
 
@@ -152,13 +207,123 @@ async function handleChat(req: ChatRequest): Promise<ChatResponse> {
     return { message: response, lockedOut };
   }
 
-  // Check guardrails
+  // Check guardrails FIRST - pattern matching catches obvious attempts
   if (isHomeworkRequest(message)) {
     const { response, lockedOut } = handleHomeworkRequest(userId);
     return { message: response, lockedOut };
   }
 
-  // Parse intent with date context
+  // Try LLM intent detection if available
+  if (llmAvailable) {
+    try {
+      const llmIntent = await parseIntentWithLLM(message);
+      const result = await handleLLMIntent(llmIntent, userId);
+      if (result) return result;
+      // If LLM returned unknown, fall through to keyword detection
+    } catch (error) {
+      console.error("LLM intent detection failed, falling back:", error);
+      // Fall through to keyword detection
+    }
+  }
+
+  // Fall back to keyword-based intent detection
+  return handleKeywordIntent(message);
+}
+
+/**
+ * Handle intent parsed by the LLM
+ */
+async function handleLLMIntent(intent: LLMIntent, userId: string): Promise<ChatResponse | null> {
+  const { dateRange } = intent;
+  const dateContext = dateRange?.description;
+
+  try {
+    switch (intent.intent) {
+      case "blocked": {
+        // LLM detected homework request - trigger guardrails
+        const { response, lockedOut } = handleHomeworkRequest(userId);
+        return { message: response, lockedOut };
+      }
+
+      case "grades": {
+        const courses = await getCoursesWithGrades();
+        return formatGradesResponse(courses);
+      }
+
+      case "missing": {
+        const [missing, unsubmitted] = await Promise.all([
+          getMissingAssignments(),
+          getUnsubmittedPastDue(),
+        ]);
+
+        const seen = new Set(missing.map((m) => m.id));
+        let combined = [
+          ...missing,
+          ...unsubmitted.filter((u) => !seen.has(u.id)),
+        ];
+
+        if (dateRange) {
+          combined = filterByDateRange(combined, dateRange);
+        }
+
+        return formatMissingResponse(combined, dateContext);
+      }
+
+      case "due_soon": {
+        let items: SimpleTodoItem[];
+
+        if (dateRange) {
+          const daysDiff = Math.ceil((dateRange.end.getTime() - new Date().getTime()) / (1000 * 60 * 60 * 24));
+          const daysToFetch = Math.max(daysDiff, 30);
+          items = await getDueThisWeek(daysToFetch);
+          items = filterByDateRange(items, dateRange);
+        } else {
+          items = await getDueThisWeek(7);
+        }
+
+        return formatDueResponse(items, dateContext);
+      }
+
+      case "analysis": {
+        if (!intent.analysis) {
+          return null; // Fall back to keyword detection
+        }
+
+        // Fetch all data and let LLM analyze it
+        const data = await fetchAllData();
+        const analysisResponse = await performAnalysis(intent.analysis, data);
+        return { message: analysisResponse };
+      }
+
+      case "help": {
+        return { message: getHelpMessage() };
+      }
+
+      case "greeting": {
+        if (intent.response) {
+          return { message: intent.response };
+        }
+        const response = GREETING_RESPONSES[Math.floor(Math.random() * GREETING_RESPONSES.length)];
+        return { message: response };
+      }
+
+      case "unknown":
+      default:
+        return null; // Fall back to keyword detection
+    }
+  } catch (error) {
+    console.error("Canvas API error:", error);
+    return {
+      message: "I'm having trouble connecting to Canvas right now. Please try again later.",
+      error: true,
+    };
+  }
+}
+
+/**
+ * Handle intent using keyword-based detection (fallback)
+ */
+async function handleKeywordIntent(message: string): Promise<ChatResponse> {
   const { type: intent, dateRange } = parseIntent(message);
   const dateContext = dateRange?.description;
 
@@ -170,20 +335,17 @@ async function handleChat(req: ChatRequest): Promise<ChatResponse> {
       }
 
       case "missing": {
-        // Get both Canvas-flagged missing AND unsubmitted past-due
         const [missing, unsubmitted] = await Promise.all([
           getMissingAssignments(),
           getUnsubmittedPastDue(),
         ]);
 
-        // Dedupe by assignment ID
         const seen = new Set(missing.map((m) => m.id));
         let combined = [
           ...missing,
           ...unsubmitted.filter((u) => !seen.has(u.id)),
         ];
 
-        // Filter by date range if specified
         if (dateRange) {
           combined = filterByDateRange(combined, dateRange);
         }
@@ -192,13 +354,11 @@ async function handleChat(req: ChatRequest): Promise<ChatResponse> {
       }
 
       case "due_soon": {
-        // If user specified a date range, use it; otherwise default to 7 days
         let items: SimpleTodoItem[];
 
         if (dateRange) {
-          // Get a larger range and filter
           const daysDiff = Math.ceil((dateRange.end.getTime() - new Date().getTime()) / (1000 * 60 * 60 * 24));
-          const daysToFetch = Math.max(daysDiff, 30); // Fetch at least 30 days
+          const daysToFetch = Math.max(daysDiff, 30);
           items = await getDueThisWeek(daysToFetch);
           items = filterByDateRange(items, dateRange);
         } else {
@@ -209,7 +369,7 @@ async function handleChat(req: ChatRequest): Promise<ChatResponse> {
       }
 
       case "help": {
-        return { message: HELP_MESSAGE };
+        return { message: getHelpMessage() };
       }
 
       case "greeting": {
@@ -660,6 +820,27 @@ if (import.meta.main) {
   } catch (error) {
     console.warn("Warning: Canvas API not configured -", (error as Error).message);
     console.warn("Chat will work but Canvas queries will fail.");
+  }
+
+  // Initialize Ollama for enhanced intent detection (optional)
+  const ollamaConfig = loadOllamaConfig();
+  if (ollamaConfig) {
+    initOllama(ollamaConfig);
+    console.log(`Ollama configured: ${ollamaConfig.baseUrl}`);
+
+    // Check if Ollama is actually reachable and discover model
+    const available = await isOllamaAvailable();
+    if (available) {
+      llmAvailable = true;
+      const model = getDetectedModel();
+      console.log(`Ollama available - using model: ${model}`);
+      console.log("Enhanced intent detection enabled");
+    } else {
+      console.warn("Warning: Ollama configured but not reachable - using keyword detection");
+    }
+  } else {
+    console.log("Ollama not configured - using keyword-based intent detection");
+    console.log("Set OLLAMA_URL to enable enhanced detection");
   }
 
   console.log(`Starting server on http://localhost:${PORT}`);

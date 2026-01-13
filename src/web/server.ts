@@ -217,7 +217,7 @@ async function handleChat(req: ChatRequest): Promise<ChatResponse> {
   if (llmAvailable) {
     try {
       const llmIntent = await parseIntentWithLLM(message);
-      const result = await handleLLMIntent(llmIntent, userId);
+      const result = await handleLLMIntent(llmIntent, userId, message);
       if (result) return result;
       // If LLM returned unknown, fall through to keyword detection
     } catch (error) {
@@ -232,9 +232,13 @@ async function handleChat(req: ChatRequest): Promise<ChatResponse> {
 
 /**
  * Handle intent parsed by the LLM
+ * Note: We also run our own date extraction as fallback since LLM may miss date filters
  */
-async function handleLLMIntent(intent: LLMIntent, userId: string): Promise<ChatResponse | null> {
-  const { dateRange } = intent;
+async function handleLLMIntent(intent: LLMIntent, userId: string, originalMessage: string): Promise<ChatResponse | null> {
+  // Use LLM's date range, but fall back to our own extraction if LLM missed it
+  const llmDateRange = intent.dateRange;
+  const ourDateRange = parseIntent(originalMessage).dateRange;
+  const dateRange = llmDateRange || ourDateRange;
   const dateContext = dateRange?.description;
 
   try {

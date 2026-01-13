@@ -19,11 +19,19 @@ FROM denoland/deno:2.1.9
 
 WORKDIR /app
 
+# Create non-root user
+RUN groupadd --gid 1000 carl && \
+    useradd --uid 1000 --gid carl --shell /bin/sh --create-home carl
+
 # Copy source from builder
 COPY --from=builder /app/deno.json ./
 COPY --from=builder /app/src/ ./src/
 
-# Cache dependencies (will use layer cache on rebuilds)
+# Set ownership and cache dependencies as non-root user
+RUN chown -R carl:carl /app
+USER carl
+
+# Cache dependencies as carl user
 RUN deno cache src/web/server.ts
 
 # Expose web server port

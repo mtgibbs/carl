@@ -17,22 +17,27 @@ RUN deno check src/**/*.ts
 # Production stage - minimal runtime
 FROM denoland/deno:2.1.9
 
-WORKDIR /app
-
-# Create non-root user
+# Create non-root user first
 RUN groupadd --gid 1000 carl && \
     useradd --uid 1000 --gid carl --shell /bin/sh --create-home carl
+
+WORKDIR /app
 
 # Copy source from builder
 COPY --from=builder /app/deno.json ./
 COPY --from=builder /app/src/ ./src/
 
-# Set ownership and cache dependencies as non-root user
-RUN chown -R carl:carl /app
+# Copy Deno cache from builder (as root, then fix ownership)
+COPY --from=builder /deno-dir /deno-dir
+
+# Set ownership of app and cache
+RUN chown -R carl:carl /app /deno-dir
+
+# Switch to non-root user
 USER carl
 
-# Cache dependencies as carl user
-RUN deno cache src/web/server.ts
+# Set Deno cache dir
+ENV DENO_DIR=/deno-dir
 
 # Expose web server port
 EXPOSE 8080

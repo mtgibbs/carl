@@ -4,6 +4,8 @@ on:
   push:
     branches:
       - main
+    tags:
+      - 'v*'
   pull_request:
     branches:
       - main
@@ -43,9 +45,17 @@ jobs:
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
+            # Branch name (main)
             type=ref,event=branch
+            # PR number
             type=ref,event=pr
+            # Short SHA
             type=sha,prefix=
+            # Semver from git tag (v1.0.0 -> 1.0.0, 1.0, 1)
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}},enable=${{ !startsWith(github.ref, 'refs/tags/v0.') }}
+            # Latest on main branch
             type=raw,value=latest,enable={{is_default_branch}}
 
       - name: Build and push

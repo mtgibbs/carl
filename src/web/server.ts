@@ -19,7 +19,16 @@ import {
   type SimpleTodoItem,
   type SimpleGradedAssignment,
 } from "../api/mod.ts";
-import { parseIntent, filterByDateRange, type DateRange } from "../intent/mod.ts";
+import { parseIntent, filterByDateRange } from "../intent/mod.ts";
+import {
+  filterCourses,
+  calculateMissingPercentages,
+  getTopPriority,
+  assessRisk,
+  type PrioritizedItem,
+  type RiskAssessment,
+  type MissingPercentageResult,
+} from "../calculations/mod.ts";
 import {
   initOllama,
   isOllamaAvailable,
@@ -230,14 +239,151 @@ function formatZerosResponse(
   };
 }
 
+function formatPercentageResponse(result: MissingPercentageResult): ChatResponse {
+  const { overall, byCourse } = result;
+
+  if (overall.missing === 0) {
+    return { message: "Good news - you have no missing assignments. 100% completion rate." };
+  }
+
+  // If missing > total (common when missing items are past due), just report the count
+  const lines: string[] = [];
+
+  if (overall.total > 0 && overall.missing <= overall.total) {
+    const completionRate = 100 - overall.percentage;
+    lines.push(`You've completed ${completionRate}% of recent assignments (${overall.total - overall.missing} of ${overall.total}).`);
+    lines.push(`Missing: ${overall.missing} assignment${overall.missing === 1 ? "" : "s"}`);
+  } else {
+    lines.push(`You have ${overall.missing} missing assignment${overall.missing === 1 ? "" : "s"}.`);
+  }
+
+  // Show courses with missing work
+  const coursesWithMissing = byCourse.filter((c) => c.missing > 0);
+  if (coursesWithMissing.length > 0) {
+    lines.push("\nBy course:");
+    for (const course of coursesWithMissing) {
+      lines.push(`• ${course.courseName}: ${course.missing} missing`);
+    }
+  }
+
+  return {
+    message: lines.join("\n"),
+    data: { type: "courses", items: byCourse },
+  };
+}
+
+function formatPriorityResponse(items: PrioritizedItem[]): ChatResponse {
+  if (items.length === 0) {
+    return { message: "You're all caught up! Nothing urgent to work on right now." };
+  }
+
+  const lines = ["Here's what you should focus on, in priority order:"];
+
+  for (let i = 0; i < items.length; i++) {
+    const item = items[i];
+    const dueStr = item.dueAt ? formatDate(item.dueAt) : "No due date";
+    const statusIcon = item.status === "missing" ? "🔴" : item.status === "due_soon" ? "🟡" : "🟢";
+
+    lines.push(`\n${i + 1}. ${statusIcon} ${item.name}`);
+    lines.push(`   ${item.courseName} · ${item.reason}`);
+    lines.push(`   Due: ${dueStr}`);
+  }
+
+  return {
+    message: lines.join("\n"),
+    data: { type: "assignments", items },
+  };
+}
+
+function formatRiskResponse(assessment: RiskAssessment): ChatResponse {
+  const { summary, courses, criticalCourses } = assessment;
+
+  // Good news path
+  if (summary.failing === 0 && summary.atRisk === 0) {
+    if (summary.borderline > 0) {
+      const borderline = courses.filter((c) => c.riskLevel === "borderline");
+      const names = borderline.map((c) => c.courseName).join(", ");
+      return {
+        message: `You're not at risk of failing, but ${summary.borderline} course(s) are borderline: ${names}. Keep an eye on those.`,
+        data: { type: "courses", items: borderline },
+      };
+    }
+    return { message: "Good news - you're not at risk of failing any classes. Keep up the good work!" };
+  }
+
+  // Risk detected
+  const lines = [];
+
+  if (summary.failing > 0) {
+    lines.push(`⚠️ FAILING (${summary.failing} course${summary.failing > 1 ? "s" : ""}):`);
+    for (const course of courses.filter((c) => c.riskLevel === "failing")) {
+      const grade = course.currentGrade !== null ? `${course.currentGrade.toFixed(1)}%` : "N/A";
+      lines.push(`  • ${course.courseName}: ${grade} - ${course.reason}`);
+    }
+  }
+
+  if (summary.atRisk > 0) {
+    lines.push(`\n🟠 AT RISK (${summary.atRisk} course${summary.atRisk > 1 ? "s" : ""}):`);
+    for (const course of courses.filter((c) => c.riskLevel === "at_risk")) {
+      const grade = course.currentGrade !== null ? `${course.currentGrade.toFixed(1)}%` : "N/A";
+      lines.push(`  • ${course.courseName}: ${grade} - ${course.reason}`);
+    }
+  }
+
+  if (summary.borderline > 0) {
+    lines.push(`\n🟡 BORDERLINE (${summary.borderline} course${summary.borderline > 1 ? "s" : ""}):`);
+    for (const course of courses.filter((c) => c.riskLevel === "borderline")) {
+      const grade = course.currentGrade !== null ? `${course.currentGrade.toFixed(1)}%` : "N/A";
+      lines.push(`  • ${course.courseName}: ${grade} - ${course.reason}`);
+    }
+  }
+
+  return {
+    message: lines.join("\n"),
+    data: { type: "courses", items: criticalCourses },
+  };
+}
+
+function formatCourseGradesResponse(courses: SimpleCourse[], filter: string | null): ChatResponse {
+  const matched = filterCourses(courses, filter);
+
+  if (matched.length === 0) {
+    return { message: `I couldn't find a course matching "${filter}".` };
+  }
+
+  if (matched.length === 1) {
+    const course = matched[0];
+    const grade = course.grade || "N/A";
+    const score = course.score !== null ? `${course.score.toFixed(1)}%` : "N/A";
+    return {
+      message: `In ${course.name}, you have a ${grade} (${score}).`,
+      data: { type: "courses", items: matched },
+    };
+  }
+
+  // Multiple matches
+  const lines = [`Found ${matched.length} courses matching "${filter}":\n`];
+  for (const c of matched) {
+    const grade = c.grade || "N/A";
+    const score = c.score !== null ? ` (${c.score.toFixed(1)}%)` : "";
+    lines.push(`• ${c.name}: ${grade}${score}`);
+  }
+
+  return {
+    message: lines.join("\n"),
+    data: { type: "courses", items: matched },
+  };
+}
+
 const HELP_MESSAGE_BASIC = `I can help you track your assignments. Try asking:
 
 • "What's due this week?"
 • "Do I have any missing assignments?"
 • "What are my grades?"
-• "What's due tomorrow?"
-• "What's missing for January?"
-• "What's due in spring 2026?"
+• "What should I work on first?"
+• "Am I at risk of failing any classes?"
+• "How am I doing in math?"
+• "What percentage of my work is missing?"
 
 I understand dates like: today, tomorrow, this week, next month, January, spring, fall, 2026, etc.
 
@@ -248,9 +394,11 @@ const HELP_MESSAGE_ENHANCED = `I can help you track your assignments. Try asking
 • "What's due this week?"
 • "Do I have any missing assignments?"
 • "What are my grades?"
+• "What should I work on first?"
+• "Am I at risk of failing any classes?"
+• "How am I doing in math?"
 • "What percentage of my work is missing?"
 • "Which class am I doing worst in?"
-• "How many assignments am I missing in math?"
 
 I understand dates like: today, tomorrow, this week, next month, January, spring, fall, 2026, etc.
 
@@ -398,6 +546,30 @@ async function handleLLMIntent(intent: LLMIntent, userId: string, originalMessag
         return formatZerosResponse(allMissing, filteredZeros, dateContext);
       }
 
+      case "percentage": {
+        const data = await fetchAllData();
+        const result = calculateMissingPercentages(data.upcoming, data.missing);
+        return formatPercentageResponse(result);
+      }
+
+      case "priority": {
+        const data = await fetchAllData();
+        const priorities = getTopPriority(data.missing, data.upcoming, data.courses, 5);
+        return formatPriorityResponse(priorities);
+      }
+
+      case "risk": {
+        const data = await fetchAllData();
+        const assessment = assessRisk(data.courses, data.missing);
+        return formatRiskResponse(assessment);
+      }
+
+      case "course_grades": {
+        const courses = await getCoursesWithGrades();
+        const courseFilter = intent.courseFilter || parseIntent(originalMessage).courseFilter;
+        return formatCourseGradesResponse(courses, courseFilter);
+      }
+
       case "due_soon": {
         let items: SimpleTodoItem[];
 
@@ -505,6 +677,30 @@ async function handleKeywordIntent(message: string): Promise<ChatResponse> {
         }
 
         return formatZerosResponse(allMissing, filteredZeros, dateContext);
+      }
+
+      case "percentage": {
+        const data = await fetchAllData();
+        const result = calculateMissingPercentages(data.upcoming, data.missing);
+        return formatPercentageResponse(result);
+      }
+
+      case "priority": {
+        const data = await fetchAllData();
+        const priorities = getTopPriority(data.missing, data.upcoming, data.courses, 5);
+        return formatPriorityResponse(priorities);
+      }
+
+      case "risk": {
+        const data = await fetchAllData();
+        const assessment = assessRisk(data.courses, data.missing);
+        return formatRiskResponse(assessment);
+      }
+
+      case "course_grades": {
+        const courses = await getCoursesWithGrades();
+        const { courseFilter } = parseIntent(message);
+        return formatCourseGradesResponse(courses, courseFilter);
       }
 
       case "due_soon": {

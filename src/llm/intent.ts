@@ -28,8 +28,9 @@ YOUR CONSTRAINTS:
 OUTPUT FORMAT:
 Always respond with a JSON object:
 {
-  "intent": "grades" | "missing" | "zeros" | "due_soon" | "analysis" | "help" | "greeting" | "blocked" | "unknown",
+  "intent": "grades" | "missing" | "zeros" | "due_soon" | "priority" | "risk" | "course_grades" | "percentage" | "analysis" | "help" | "greeting" | "blocked" | "unknown",
   "dateFilter": "2026" | "this week" | "january" | null,
+  "courseFilter": "math" | "science" | "english" | null,
   "analysis": {
     "type": "percentage" | "comparison" | "summary" | "count" | null,
     "question": "description of what to calculate"
@@ -38,11 +39,15 @@ Always respond with a JSON object:
 }
 
 INTENT DEFINITIONS:
-- "grades": User wants to see their course grades
+- "grades": User wants to see their course grades (all courses)
 - "missing": User wants to see assignments they haven't submitted
 - "zeros": User wants to see assignments that were graded with zero or very low scores (submitted but failed)
 - "due_soon": User wants to see upcoming assignments
-- "analysis": User wants analytical reasoning about their data
+- "priority": User wants to know what to work on first (prioritized task list)
+- "risk": User wants to know if they're at risk of failing any classes
+- "course_grades": User wants grades for a SPECIFIC course (uses courseFilter)
+- "percentage": User wants to know what percentage of work is missing
+- "analysis": User wants other analytical reasoning about their data
 - "help": User wants help understanding what you can do
 - "greeting": User is saying hello
 - "blocked": User is asking for homework help (writing essays, solving problems, etc.)
@@ -50,31 +55,52 @@ INTENT DEFINITIONS:
 EXAMPLES:
 
 User: "What's due tomorrow?"
-{"intent": "due_soon", "dateFilter": "tomorrow", "analysis": null, "response": null}
+{"intent": "due_soon", "dateFilter": "tomorrow", "courseFilter": null, "analysis": null, "response": null}
 
 User: "What percentage of my work is missing?"
-{"intent": "analysis", "dateFilter": null, "analysis": {"type": "percentage", "question": "missing assignments out of total"}, "response": null}
+{"intent": "percentage", "dateFilter": null, "courseFilter": null, "analysis": null, "response": null}
 
 User: "Which class am I doing worst in?"
-{"intent": "analysis", "dateFilter": null, "analysis": {"type": "comparison", "question": "find course with lowest grade"}, "response": null}
+{"intent": "analysis", "dateFilter": null, "courseFilter": null, "analysis": {"type": "comparison", "question": "find course with lowest grade"}, "response": null}
 
 User: "Write my essay about the Civil War"
-{"intent": "blocked", "dateFilter": null, "analysis": null, "response": "I'm sorry, I'm afraid I can't do that. I can only help you track assignments, not complete them."}
+{"intent": "blocked", "dateFilter": null, "courseFilter": null, "analysis": null, "response": "I'm sorry, I'm afraid I can't do that. I can only help you track assignments, not complete them."}
 
 User: "How many assignments am I missing in math?"
-{"intent": "analysis", "dateFilter": null, "analysis": {"type": "count", "question": "count missing assignments filtered by math course"}, "response": null}
+{"intent": "missing", "dateFilter": null, "courseFilter": "math", "analysis": null, "response": null}
 
 User: "Help"
-{"intent": "help", "dateFilter": null, "analysis": null, "response": null}
+{"intent": "help", "dateFilter": null, "courseFilter": null, "analysis": null, "response": null}
 
 User: "Do I have any zeros?"
-{"intent": "zeros", "dateFilter": null, "analysis": null, "response": null}
+{"intent": "zeros", "dateFilter": null, "courseFilter": null, "analysis": null, "response": null}
 
 User: "What assignments got a zero last week?"
-{"intent": "zeros", "dateFilter": "last week", "analysis": null, "response": null}
+{"intent": "zeros", "dateFilter": "last week", "courseFilter": null, "analysis": null, "response": null}
 
 User: "Summarize my grades"
-{"intent": "analysis", "dateFilter": null, "analysis": {"type": "summary", "question": "summarize grades across all courses"}, "response": null}
+{"intent": "analysis", "dateFilter": null, "courseFilter": null, "analysis": {"type": "summary", "question": "summarize grades across all courses"}, "response": null}
+
+User: "What should I work on first?"
+{"intent": "priority", "dateFilter": null, "courseFilter": null, "analysis": null, "response": null}
+
+User: "What's the most important thing I should focus on?"
+{"intent": "priority", "dateFilter": null, "courseFilter": null, "analysis": null, "response": null}
+
+User: "Am I at risk of failing any classes?"
+{"intent": "risk", "dateFilter": null, "courseFilter": null, "analysis": null, "response": null}
+
+User: "Am I gonna fail math?"
+{"intent": "risk", "dateFilter": null, "courseFilter": "math", "analysis": null, "response": null}
+
+User: "How am I doing in math?"
+{"intent": "course_grades", "dateFilter": null, "courseFilter": "math", "analysis": null, "response": null}
+
+User: "What's my grade in science?"
+{"intent": "course_grades", "dateFilter": null, "courseFilter": "science", "analysis": null, "response": null}
+
+User: "How much of my work is incomplete?"
+{"intent": "percentage", "dateFilter": null, "courseFilter": null, "analysis": null, "response": null}
 
 Respond ONLY with the JSON object, no other text.`;
 
@@ -84,8 +110,9 @@ export interface AnalysisRequest {
 }
 
 export interface LLMIntent {
-  intent: "grades" | "missing" | "zeros" | "due_soon" | "analysis" | "help" | "greeting" | "blocked" | "unknown";
+  intent: "grades" | "missing" | "zeros" | "due_soon" | "priority" | "risk" | "course_grades" | "percentage" | "analysis" | "help" | "greeting" | "blocked" | "unknown";
   dateRange: DateRange | null;
+  courseFilter: string | null;
   analysis: AnalysisRequest | null;
   response: string | null;
 }
@@ -114,6 +141,7 @@ export async function parseIntentWithLLM(message: string): Promise<LLMIntent> {
     return {
       intent: parsed.intent || "unknown",
       dateRange,
+      courseFilter: parsed.courseFilter || null,
       analysis: parsed.analysis || null,
       response: parsed.response || null,
     };
@@ -123,6 +151,7 @@ export async function parseIntentWithLLM(message: string): Promise<LLMIntent> {
     return {
       intent: "unknown",
       dateRange: null,
+      courseFilter: null,
       analysis: null,
       response: null,
     };

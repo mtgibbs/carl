@@ -29,11 +29,6 @@ CARL is a constrained AI assistant for tracking school assignments. Built for a 
 
 ```
 ┌─────────────────┐
-│  Discord Bot    │──── Scheduled notifications ("3 things due tomorrow")
-└────────┬────────┘
-         │
-         ▼
-┌─────────────────┐
 │  Chat Web UI    │──── Natural language queries ("what's due?")
 └────────┬────────┘
          │
@@ -59,7 +54,6 @@ CARL is a constrained AI assistant for tracking school assignments. Built for a 
 | Component | Technology |
 |-----------|------------|
 | Runtime | Deno |
-| Discord | Webhook notifications (no bot token needed) |
 | Web UI | HAL 9000-themed chat interface |
 | Intent Detection | Keyword-based (Ollama optional for LLM) |
 | Canvas API | Ported from school-canvas-claude-integration |
@@ -270,12 +264,7 @@ Credentials stored in 1Password `pi-cluster` vault, item `Canvas-API`:
 - [x] Graceful fallback to keyword detection
 
 ### Next Steps
-1. **Discord Bot**
-   - Create Discord webhook in kid's server
-   - Implement cron scheduling for daily digest
-   - Add missing assignment alerts
-
-2. **Guardrails Testing**
+1. **Guardrails Testing**
    - Test LLM guardrails with various bypass attempts
    - Fine-tune system prompt if needed
 
@@ -304,8 +293,6 @@ carl/
     │   ├── users.ts             # Users API (missing, planner)
     │   ├── submissions.ts       # Submissions API
     │   └── enrollments.ts       # Enrollments API
-    ├── discord/
-    │   └── bot.ts               # Discord webhook notifications
     ├── guardrails/
     │   ├── mod.ts               # Exports
     │   ├── patterns.ts          # Homework detection
@@ -327,9 +314,6 @@ carl/
 # Start web chat UI
 deno task web
 
-# Start Discord bot (needs Canvas API)
-deno task discord
-
 # Run guardrails test
 deno task dev
 
@@ -350,8 +334,8 @@ deno task lint
 | `CANVAS_API_TOKEN` | Canvas LMS API token |
 | `CANVAS_BASE_URL` | School's Canvas URL |
 | `CANVAS_STUDENT_ID` | Student ID (numeric for observers, "self" for students) |
-| `DISCORD_WEBHOOK_URL` | Discord webhook for notifications |
 | `PORT` | Web server port (default: 8080) |
+| `TIMEZONE` | Timezone for date display (default: America/New_York) |
 | `OLLAMA_URL` | Ollama API endpoint (optional - enables LLM, model auto-detected) |
 | `OLLAMA_TIMEOUT` | Ollama request timeout in ms (default: 30000) |
 
